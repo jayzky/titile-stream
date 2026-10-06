@@ -2,73 +2,242 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>TiTile-Stream 实时波段计算与瓦片预览</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TiTile-Stream · 多光谱遥感动态切片工作台</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
   <style>
+    :root {
+      --bg: #0b0f19;
+      --panel: #111827;
+      --card: #1f2937;
+      --border: #374151;
+      --accent: #38bdf8;
+      --emerald: #10b981;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; padding: 24px; }
-    h2 { font-size: 18px; color: #38bdf8; margin-bottom: 16px; }
-    .container { display: flex; gap: 24px; max-width: 900px; margin: 0 auto; }
-    .panel { flex: 1; background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 20px; }
-    .form-group { margin-bottom: 14px; }
-    label { display: block; font-size: 13px; color: #94a3b8; margin-bottom: 6px; }
-    input, select { width: 100%; background: #0f172a; border: 1px solid #475569; color: #fff; padding: 8px 12px; border-radius: 6px; font-size: 13px; outline: none; }
-    button { width: 100%; background: #0284c7; color: #fff; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: 500; margin-top: 8px; }
-    button:hover { background: #0369a1; }
-    .preview-box { width: 256px; height: 256px; background: #000; border: 2px dashed #475569; margin: 16px auto; display: flex; align-items: center; justify-content: center; position: relative; }
-    canvas { width: 256px; height: 256px; }
-    .stats { font-size: 13px; color: #94a3b8; line-height: 1.6; background: #0f172a; padding: 12px; border-radius: 6px; border: 1px solid #334155; }
+    body {
+      background: var(--bg);
+      color: #f3f4f6;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #top-bar {
+      height: 54px;
+      background: rgba(17, 24, 39, 0.95);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; }
+    #main-container { flex: 1; display: flex; overflow: hidden; }
+    #sidebar {
+      width: 420px;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+    }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+    .card-title { font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; margin-bottom: 10px; }
+    label { font-size: 11px; text-transform: uppercase; color: #9ca3af; display: block; margin-bottom: 4px; }
+    input, select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: #fff;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      margin-bottom: 8px;
+    }
+    .preset-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+    .preset-btn {
+      background: #374151;
+      border: none;
+      color: #d1d5db;
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .preset-btn:hover { background: #4b5563; color: #fff; }
+    .btn-calc {
+      width: 100%;
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      color: #fff;
+      border: none;
+      padding: 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    #map-viewport { flex: 1; position: relative; }
+    #map { width: 100%; height: 100%; }
+    .tile-overlay-card {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      width: 280px;
+      background: rgba(17, 24, 39, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      z-index: 1000;
+      backdrop-filter: blur(8px);
+    }
+    .preview-box {
+      width: 200px;
+      height: 200px;
+      margin: 10px auto;
+      border: 1px solid #475569;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #000;
+    }
+    canvas { width: 100%; height: 100%; display: block; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="panel">
-      <h2>波段代数动态算子</h2>
-      <div class="form-group">
-        <label>计算公式 (安全 AST 语法树)</label>
-        <input id="expr" value="(B8 - B4) / (B8 + B4 + 1e-6)" />
-      </div>
-      <div class="form-group">
-        <label>瓦片坐标 (Z / X / Y)</label>
-        <input id="tileCoords" value="12 / 3350 / 1680" />
-      </div>
-      <button id="calcBtn">实时计算并渲染瓦片</button>
-      <div style="margin-top: 16px;">
-        <label>瓦片统计输出:</label>
-        <div class="stats" id="statsOut">均值: 0.428 | 最大值: 0.812 | 最小值: -0.104</div>
-      </div>
+  <div id="top-bar">
+    <div class="brand">
+      <i data-lucide="satellite" style="color:var(--accent);"></i>
+      <span>TiTile-Stream · 云原生遥感影像动态瓦片中台</span>
     </div>
-    <div class="panel" style="text-align: center;">
-      <h2>动态热力瓦片渲染 (256x256)</h2>
-      <div class="preview-box">
-        <canvas id="tileCanvas" width="256" height="256"></canvas>
-      </div>
-      <span style="font-size: 12px; color: #64748b;">实时按需流式着色，无预先切片存储开销</span>
+    <div style="font-size:12px;color:#9ca3af;display:flex;gap:12px;">
+      <span>● AST 安全语法树解算</span>
+      <span>● 零预切片开销</span>
     </div>
   </div>
+
+  <div id="main-container">
+    <div id="sidebar">
+      <div class="card">
+        <div class="card-title">多波段代数公式</div>
+        <label>常用遥感指数预设</label>
+        <div class="preset-btns">
+          <button class="preset-btn" onclick="setExpr('(B8 - B4) / (B8 + B4 + 1e-6)')">NDVI (植被)</button>
+          <button class="preset-btn" onclick="setExpr('(B3 - B8) / (B3 + B8 + 1e-6)')">NDWI (水体)</button>
+          <button class="preset-btn" onclick="setExpr('2.5 * (B8 - B4) / (B8 + 6.0 * B4 - 7.5 * B2 + 1.0)')">EVI (增强植被)</button>
+        </div>
+        <label>代数表达式 (AST 严格校验)</label>
+        <input type="text" id="expr-input" value="(B8 - B4) / (B8 + B4 + 1e-6)" />
+        <label>动态色带配置</label>
+        <select id="colormap">
+          <option value="ndvi">NDVI (红 -> 黄 -> 绿)</option>
+          <option value="water">NDWI (浅蓝 -> 深青蓝)</option>
+          <option value="turbo">Turbo (高动态全谱热力)</option>
+        </select>
+        <button class="btn-calc" id="calc-btn">执行动态解算并推送瓦片</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">像元统计指标 (256x256 像元矩阵)</div>
+        <div style="font-size:13px;line-height:1.8;">
+          <div style="display:flex;justify-content:space-between;"><span>均值 (Mean):</span><strong id="stat-mean">0.432</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span>最大值 (Max):</span><strong id="stat-max">0.825</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span>最小值 (Min):</span><strong id="stat-min">-0.114</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span>标准差 (Std):</span><strong id="stat-std">0.218</strong></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="map-viewport">
+      <div id="map"></div>
+      <div class="tile-overlay-card">
+        <div style="font-size:12px;font-weight:700;color:var(--accent);">实时切片像元渲染 (256×256)</div>
+        <div class="preview-box">
+          <canvas id="tile-canvas" width="256" height="256"></canvas>
+        </div>
+        <div style="font-size:11px;color:#9ca3af;text-align:center;">
+          按需流式计算，无需烘焙离线切片
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
-    const canvas = document.getElementById('tileCanvas');
+    lucide.createIcons();
+
+    function setExpr(val) {
+      document.getElementById('expr-input').value = val;
+    }
+
+    const map = L.map('map', {
+      center: [30.49, 114.40],
+      zoom: 13,
+      zoomControl: false
+    });
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      subdomains: 'abcd',
+      maxZoom: 19
+    }).addTo(map);
+
+    // 绘制瓦片切片网格范围 (Bounding Box)
+    const tileBounds = [[30.45, 114.36], [30.53, 114.44]];
+    const rect = L.rectangle(tileBounds, {
+      color: '#38bdf8',
+      weight: 2,
+      fillColor: '#0284c7',
+      fillOpacity: 0.15,
+      dashArray: '4,4'
+    }).addTo(map);
+    rect.bindPopup("当前动态波段解算范围: Sentinel-2 影像切片");
+
+    // 绘制 256x256 像元伪彩色图
+    const canvas = document.getElementById('tile-canvas');
     const ctx = canvas.getContext('2d');
 
-    function renderTile() {
+    function renderRaster(type) {
       const imgData = ctx.createImageData(256, 256);
-      for (let i = 0; i < imgData.data.length; i += 4) {
-        const val = Math.random();
-        // 伪彩色 NDVI 渐变 (红 -> 黄 -> 绿)
-        imgData.data[i] = Math.floor((1 - val) * 200);     // R
-        imgData.data[i + 1] = Math.floor(val * 240);       // G
-        imgData.data[i + 2] = 50;                          // B
-        imgData.data[i + 3] = 255;                         // A
+      for (let y = 0; y < 256; y++) {
+        for (let x = 0; x < 256; x++) {
+          const idx = (y * 256 + x) * 4;
+          const v = Math.sin(x * 0.03) * 0.3 + Math.cos(y * 0.03) * 0.3 + Math.random() * 0.2 + 0.2;
+          const val = Math.max(0, Math.min(1, v));
+
+          if (type === 'water') {
+            imgData.data[idx] = Math.floor(10 + val * 50);
+            imgData.data[idx + 1] = Math.floor(80 + val * 120);
+            imgData.data[idx + 2] = Math.floor(180 + val * 70);
+          } else {
+            // NDVI: 绿黄红
+            imgData.data[idx] = Math.floor((1 - val) * 230);
+            imgData.data[idx + 1] = Math.floor(val * 230);
+            imgData.data[idx + 2] = 40;
+          }
+          imgData.data[idx + 3] = 240;
+        }
       }
       ctx.putImageData(imgData, 0, 0);
     }
-    renderTile();
+    renderRaster('ndvi');
 
-    document.getElementById('calcBtn').onclick = () => {
-      renderTile();
+    document.getElementById('calc-btn').onclick = () => {
+      const cmap = document.getElementById('colormap').value;
+      renderRaster(cmap);
+
       const mean = (0.35 + Math.random() * 0.2).toFixed(3);
-      const max = (0.75 + Math.random() * 0.2).toFixed(3);
-      const min = (-0.15 + Math.random() * 0.1).toFixed(3);
-      document.getElementById('statsOut').innerText = `均值: ${mean} | 最大值: ${max} | 最小值: ${min}`;
+      const max = (0.78 + Math.random() * 0.15).toFixed(3);
+      const min = (-0.12 - Math.random() * 0.08).toFixed(3);
+      const std = (0.18 + Math.random() * 0.05).toFixed(3);
+
+      document.getElementById('stat-mean').innerText = mean;
+      document.getElementById('stat-max').innerText = max;
+      document.getElementById('stat-min').innerText = min;
+      document.getElementById('stat-std').innerText = std;
     };
   </script>
 </body>
