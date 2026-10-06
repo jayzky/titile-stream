@@ -1,0 +1,15 @@
+[project]
+name = "titile-stream"
+version = "0.1.0"
+description = "Cloud-Native Raster Tile Server with Dynamic On-the-Fly Band Algebra"
+authors = [{ name = "Zhang Kuo" }]
+dependencies = [
+    "fastapi>=0.110.0",
+    "numpy>=1.24.0",
+    "pydantic>=2.0.0"
+]
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
