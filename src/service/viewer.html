@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TiTile-Stream · 多光谱遥感动态切片工作台</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="./vendor/leaflet.css" />
+  <script src="./vendor/leaflet.js"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
   <style>
     :root {
@@ -17,51 +17,56 @@
       --emerald: #10b981;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
+    html, body {
+      width: 100%;
+      height: 100%;
       background: var(--bg);
       color: #f3f4f6;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       display: flex;
       flex-direction: column;
-      height: 100vh;
       overflow: hidden;
     }
     #top-bar {
-      height: 54px;
-      background: rgba(17, 24, 39, 0.95);
+      height: 52px;
+      min-height: 52px;
+      background: #111827;
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 20px;
+      padding: 0 18px;
+      z-index: 1000;
     }
-    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; }
-    #main-container { flex: 1; display: flex; overflow: hidden; }
+    .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; }
+    #main-container { flex: 1; display: flex; overflow: hidden; width: 100%; height: calc(100vh - 52px); }
     #sidebar {
       width: 420px;
+      min-width: 420px;
       background: var(--panel);
       border-right: 1px solid var(--border);
-      padding: 20px;
+      padding: 16px;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 14px;
       overflow-y: auto;
+      z-index: 500;
     }
-    .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
-    .card-title { font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; margin-bottom: 10px; }
-    label { font-size: 11px; text-transform: uppercase; color: #9ca3af; display: block; margin-bottom: 4px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
+    .card-title { font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; margin-bottom: 8px; }
+    label { font-size: 11px; text-transform: uppercase; color: #9ca3af; display: block; margin-bottom: 3px; }
     input, select {
       width: 100%;
       background: var(--bg);
       border: 1px solid var(--border);
       color: #fff;
-      padding: 8px 10px;
-      border-radius: 6px;
-      font-size: 13px;
+      padding: 7px 10px;
+      border-radius: 4px;
+      font-size: 12px;
       outline: none;
       margin-bottom: 8px;
     }
-    .preset-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+    .preset-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
     .preset-btn {
       background: #374151;
       border: none;
@@ -77,28 +82,39 @@
       background: linear-gradient(135deg, #0284c7, #2563eb);
       color: #fff;
       border: none;
-      padding: 10px;
+      padding: 9px;
       border-radius: 6px;
       cursor: pointer;
       font-weight: 600;
+      font-size: 13px;
     }
-    #map-viewport { flex: 1; position: relative; }
-    #map { width: 100%; height: 100%; }
+    #map-viewport { flex: 1; position: relative; height: 100%; background: #1e293b; }
+    #map {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
 
     .basemap-switch {
       position: absolute;
       top: 16px;
       right: 16px;
-      background: rgba(17, 24, 39, 0.92);
+      background: rgba(17, 24, 39, 0.95);
       border: 1px solid var(--border);
       border-radius: 6px;
       padding: 6px 10px;
-      z-index: 1000;
+      z-index: 500;
       display: flex;
       gap: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     }
     .bm-btn {
-      background: #1e293b;
+      background: #1f2937;
       border: 1px solid #374151;
       color: #94a3b8;
       font-size: 11px;
@@ -112,20 +128,20 @@
       position: absolute;
       bottom: 24px;
       right: 16px;
-      width: 280px;
-      background: rgba(17, 24, 39, 0.92);
+      width: 260px;
+      background: rgba(17, 24, 39, 0.95);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 16px;
-      z-index: 1000;
+      border-radius: 6px;
+      padding: 14px;
+      z-index: 500;
       backdrop-filter: blur(8px);
     }
     .preview-box {
-      width: 200px;
-      height: 200px;
-      margin: 10px auto;
+      width: 180px;
+      height: 180px;
+      margin: 8px auto;
       border: 1px solid #475569;
-      border-radius: 6px;
+      border-radius: 4px;
       overflow: hidden;
       background: #000;
     }
@@ -140,7 +156,7 @@
     </div>
     <div style="font-size:12px;color:#9ca3af;display:flex;gap:12px;">
       <span>● AST 安全语法树解算</span>
-      <span>● 开源 OSM 底图</span>
+      <span>● 多源高可用底图</span>
     </div>
   </div>
 
@@ -179,10 +195,11 @@
     <div id="map-viewport">
       <div id="map"></div>
 
-      <!-- 底图切换：默认开源 OSM -->
+      <!-- 底图切换：默认高德毫秒直连 + 开源 OSM + 卫星 -->
       <div class="basemap-switch">
-        <button class="bm-btn active" id="btn-osm" onclick="switchBase('osm')">开源 OSM 标准底图</button>
-        <button class="bm-btn" id="btn-dark" onclick="switchBase('dark')">Carto 极客暗黑</button>
+        <button class="bm-btn active" id="btn-amap" onclick="switchBase('amap')">高德标准道路 (国内秒开)</button>
+        <button class="bm-btn" id="btn-osm" onclick="switchBase('osm')">开源 OSM 标准底图</button>
+        <button class="bm-btn" id="btn-satellite" onclick="switchBase('satellite')">遥感卫星实景</button>
       </div>
 
       <div class="tile-overlay-card">
@@ -198,30 +215,39 @@
   </div>
 
   <script>
-    lucide.createIcons();
+    if (window.lucide) lucide.createIcons();
 
     function setExpr(val) {
       document.getElementById('expr-input').value = val;
     }
 
     const bmLayers = {
-      osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      amap: L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+        subdomains: ['1', '2', '3', '4'],
+        maxZoom: 18,
+        attribution: '&copy; 高德地图 AutoNavi'
       }),
-      dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        subdomains: 'abcd',
-        maxZoom: 19
+      osm: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap'
+      }),
+      satellite: L.tileLayer('https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', {
+        subdomains: ['1', '2', '3', '4'],
+        maxZoom: 18,
+        attribution: '&copy; 高德实景影像'
       })
     };
 
     const map = L.map('map', {
       center: [30.49, 114.40],
       zoom: 13,
-      layers: [bmLayers.osm], // 默认启用开源 OpenStreetMap 标准底图
+      layers: [bmLayers.amap],
       zoomControl: false
     });
     L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    setTimeout(() => { map.invalidateSize(true); }, 250);
+    window.addEventListener('resize', () => { map.invalidateSize(); });
 
     function switchBase(name) {
       Object.values(bmLayers).forEach(l => map.removeLayer(l));
@@ -258,6 +284,7 @@
             imgData.data[idx + 1] = Math.floor(80 + val * 120);
             imgData.data[idx + 2] = Math.floor(180 + val * 70);
           } else {
+            // NDVI: 绿黄红
             imgData.data[idx] = Math.floor((1 - val) * 230);
             imgData.data[idx + 1] = Math.floor(val * 230);
             imgData.data[idx + 2] = 40;
