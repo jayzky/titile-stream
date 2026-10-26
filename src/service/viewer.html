@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TiTile-Stream · 多光谱遥感动态切片工作台</title>
+  <title>TiTile-Stream · 波段计算工作台</title>
   <link rel="stylesheet" href="./vendor/leaflet.css" />
   <script src="./vendor/leaflet.js"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
@@ -152,11 +152,11 @@
   <div id="top-bar">
     <div class="brand">
       <i data-lucide="satellite" style="color:var(--accent);"></i>
-      <span>TiTile-Stream · 云原生遥感影像动态瓦片中台</span>
+      <span>TiTile-Stream · 波段表达式与瓦片坐标计算</span>
     </div>
     <div style="font-size:12px;color:#9ca3af;display:flex;gap:12px;">
-      <span>● AST 安全语法树解算</span>
-      <span>● 多源高可用底图</span>
+      <span>AST 白名单 · NumPy</span>
+      <span>模拟模式 / 服务端栅格</span>
     </div>
   </div>
 
@@ -164,6 +164,11 @@
     <div id="sidebar">
       <div class="card">
         <div class="card-title">多波段代数公式</div>
+        <label for="source-select">计算数据来源</label>
+        <select id="source-select">
+          <option value="simulated">内置模拟波段（不代表卫星影像）</option>
+          <option value="raster">服务端配置栅格（TILE_RASTER_PATH）</option>
+        </select>
         <label>常用遥感指数预设</label>
         <div class="preset-btns">
           <button class="preset-btn" onclick="setExpr('(B8 - B4) / (B8 + B4 + 1e-6)')">NDVI (植被)</button>
@@ -178,16 +183,18 @@
           <option value="water">NDWI (浅蓝 -> 深青蓝)</option>
           <option value="turbo">Turbo (高动态全谱热力)</option>
         </select>
-        <button class="btn-calc" id="calc-btn">执行动态解算并推送瓦片</button>
+        <button class="btn-calc" id="calc-btn">计算地图中心所在瓦片</button>
+        <p id="request-status" role="status" style="font-size:12px;line-height:1.6;margin-top:8px;">尚未计算。默认模拟模式；栅格模式仅读取服务端配置文件，计算当前地图中心所在瓦片。</p>
       </div>
 
       <div class="card">
         <div class="card-title">像元统计指标 (256x256 像元矩阵)</div>
         <div style="font-size:13px;line-height:1.8;">
-          <div style="display:flex;justify-content:space-between;"><span>均值 (Mean):</span><strong id="stat-mean">0.432</strong></div>
-          <div style="display:flex;justify-content:space-between;"><span>最大值 (Max):</span><strong id="stat-max">0.825</strong></div>
-          <div style="display:flex;justify-content:space-between;"><span>最小值 (Min):</span><strong id="stat-min">-0.114</strong></div>
-          <div style="display:flex;justify-content:space-between;"><span>标准差 (Std):</span><strong id="stat-std">0.218</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span>均值 (Mean):</span><strong id="stat-mean">—</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span>最大值 (Max):</span><strong id="stat-max">—</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span>最小值 (Min):</span><strong id="stat-min">—</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span>标准差 (Std):</span><strong id="stat-std">—</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span>有效／无数据像元:</span><strong id="stat-count">—</strong></div>
         </div>
       </div>
     </div>
@@ -195,20 +202,19 @@
     <div id="map-viewport">
       <div id="map"></div>
 
-      <!-- 底图切换：默认高德毫秒直连 + 开源 OSM + 卫星 -->
+      <!-- 底图仅用于定位，与计算数据来源独立。 -->
       <div class="basemap-switch">
-        <button class="bm-btn active" id="btn-amap" onclick="switchBase('amap')">高德标准道路 (国内秒开)</button>
-        <button class="bm-btn" id="btn-osm" onclick="switchBase('osm')">开源 OSM 标准底图</button>
-        <button class="bm-btn" id="btn-satellite" onclick="switchBase('satellite')">遥感卫星实景</button>
+        <button class="bm-btn active" id="btn-osm" onclick="switchBase('osm')">开源 OSM 标准底图</button>
+        <button class="bm-btn" id="btn-dark" onclick="switchBase('dark')">Carto 暗色底图</button>
       </div>
 
       <div class="tile-overlay-card">
-        <div style="font-size:12px;font-weight:700;color:var(--accent);">实时切片像元渲染 (256×256)</div>
+        <div style="font-size:12px;font-weight:700;color:var(--accent);">后端计算像元预览 (256×256)</div>
         <div class="preview-box">
           <canvas id="tile-canvas" width="256" height="256"></canvas>
         </div>
         <div style="font-size:11px;color:#9ca3af;text-align:center;">
-          按需流式计算，无需烘焙离线切片
+          后端公式计算结果；透明区域表示无数据
         </div>
       </div>
     </div>
@@ -222,26 +228,21 @@
     }
 
     const bmLayers = {
-      amap: L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
-        subdomains: ['1', '2', '3', '4'],
-        maxZoom: 18,
-        attribution: '&copy; 高德地图 AutoNavi'
-      }),
       osm: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
         attribution: '&copy; OpenStreetMap'
       }),
-      satellite: L.tileLayer('https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', {
-        subdomains: ['1', '2', '3', '4'],
-        maxZoom: 18,
-        attribution: '&copy; 高德实景影像'
+      dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {
+        subdomains: ['a', 'b', 'c'],
+        maxZoom: 19,
+        attribution: '&copy; CARTO'
       })
     };
 
     const map = L.map('map', {
       center: [30.49, 114.40],
       zoom: 13,
-      layers: [bmLayers.amap],
+      layers: [bmLayers.osm],
       zoomControl: false
     });
     L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -256,35 +257,44 @@
       document.getElementById(`btn-${name}`).classList.add('active');
     }
 
-    // 绘制瓦片切片网格范围 (Bounding Box)
-    const tileBounds = [[30.45, 114.36], [30.53, 114.44]];
-    const rect = L.rectangle(tileBounds, {
+    const rect = L.rectangle([[0, 0], [0, 0]], {
       color: '#0284c7',
       weight: 2,
       fillColor: '#38bdf8',
       fillOpacity: 0.15,
       dashArray: '4,4'
     }).addTo(map);
-    rect.bindPopup("当前动态波段解算范围: Sentinel-2 影像切片");
+    rect.bindPopup('所选 XYZ 瓦片边界；数据来源见计算状态。');
 
     // 绘制 256x256 像元伪彩色图
     const canvas = document.getElementById('tile-canvas');
     const ctx = canvas.getContext('2d');
 
-    function renderRaster(type) {
-      const imgData = ctx.createImageData(256, 256);
-      for (let y = 0; y < 256; y++) {
-        for (let x = 0; x < 256; x++) {
-          const idx = (y * 256 + x) * 4;
-          const v = Math.sin(x * 0.03) * 0.3 + Math.cos(y * 0.03) * 0.3 + Math.random() * 0.2 + 0.2;
-          const val = Math.max(0, Math.min(1, v));
+    function renderRaster(pixels, type, minimum, maximum) {
+      const height = pixels.length;
+      const width = pixels[0].length;
+      canvas.width = width;
+      canvas.height = height;
+      const imgData = ctx.createImageData(width, height);
+      const scale = Math.max(Math.abs(minimum), Math.abs(maximum)) || 1;
+      const normalizedMin = minimum / scale;
+      const span = maximum / scale - normalizedMin;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = (y * width + x) * 4;
+          const value = pixels[y][x];
+          if (value === null || !Number.isFinite(value)) continue;
+          const val = span > 0 ? Math.max(0, Math.min(1, (value / scale - normalizedMin) / span)) : 0.5;
 
           if (type === 'water') {
             imgData.data[idx] = Math.floor(10 + val * 50);
             imgData.data[idx + 1] = Math.floor(80 + val * 120);
             imgData.data[idx + 2] = Math.floor(180 + val * 70);
+          } else if (type === 'turbo') {
+            imgData.data[idx] = Math.round(255 * val);
+            imgData.data[idx + 1] = Math.round(255 * (1 - Math.abs(2 * val - 1)));
+            imgData.data[idx + 2] = Math.round(255 * (1 - val));
           } else {
-            // NDVI: 绿黄红
             imgData.data[idx] = Math.floor((1 - val) * 230);
             imgData.data[idx + 1] = Math.floor(val * 230);
             imgData.data[idx + 2] = 40;
@@ -294,22 +304,73 @@
       }
       ctx.putImageData(imgData, 0, 0);
     }
-    renderRaster('ndvi');
+    let lastResult = null;
+    let rasterOverlay = null;
+    let lastImagePath = null;
+    let lastBounds = null;
+    const status = document.getElementById('request-status');
+    const button = document.getElementById('calc-btn');
 
-    document.getElementById('calc-btn').onclick = () => {
-      const cmap = document.getElementById('colormap').value;
-      renderRaster(cmap);
+    async function getJson(path) {
+      const response = await fetch(path);
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : '请求参数不合法');
+      return data;
+    }
 
-      const mean = (0.35 + Math.random() * 0.2).toFixed(3);
-      const max = (0.78 + Math.random() * 0.15).toFixed(3);
-      const min = (-0.12 - Math.random() * 0.08).toFixed(3);
-      const std = (0.18 + Math.random() * 0.05).toFixed(3);
+    function drawResult() {
+      if (!lastResult) return;
+      const colormap = document.getElementById('colormap').value;
+      renderRaster(lastResult.pixels, colormap,
+        lastResult.stats.min, lastResult.stats.max);
+      if (rasterOverlay) map.removeLayer(rasterOverlay);
+      rasterOverlay = L.imageOverlay(`${lastImagePath}&colormap=${colormap}`, lastBounds,
+        { opacity: 0.85 }).addTo(map);
+      rasterOverlay.on('error', () => { status.textContent = 'PNG 瓦片加载失败，请检查后端响应。'; });
+    }
 
-      document.getElementById('stat-mean').innerText = mean;
-      document.getElementById('stat-max').innerText = max;
-      document.getElementById('stat-min').innerText = min;
-      document.getElementById('stat-std').innerText = std;
+    button.onclick = async () => {
+      button.disabled = true;
+      lastResult = null;
+      if (rasterOverlay) {
+        map.removeLayer(rasterOverlay);
+        rasterOverlay = null;
+      }
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ['mean', 'max', 'min', 'std', 'count'].forEach(name => {
+        document.getElementById(`stat-${name}`).textContent = '—';
+      });
+      const z = map.getZoom();
+      const point = map.project(map.getCenter(), z).divideBy(256).floor();
+      const x = ((point.x % (2 ** z)) + 2 ** z) % (2 ** z);
+      const y = Math.max(0, Math.min(2 ** z - 1, point.y));
+      const tilePath = `/tiles/${z}/${x}/${y}`;
+      status.textContent = `正在请求后端计算 ${z}/${x}/${y}…`;
+      try {
+        const expression = document.getElementById('expr-input').value;
+        const source = document.getElementById('source-select').value;
+        const query = new URLSearchParams({ expr: expression, include_pixels: 'true', source });
+        const [result, bounds] = await Promise.all([
+          getJson(`${tilePath}/calc?${query}`), getJson(`${tilePath}/bounds`)
+        ]);
+        lastResult = result;
+        ['mean', 'max', 'min', 'std'].forEach(name => {
+          const value = result.stats[name];
+          document.getElementById(`stat-${name}`).textContent = value === null ? '无有效值' : value.toFixed(6);
+        });
+        document.getElementById('stat-count').textContent = `${result.valid_count} / ${result.nodata_count}`;
+        lastBounds = [[bounds.bbox.south, bounds.bbox.west], [bounds.bbox.north, bounds.bbox.east]];
+        lastImagePath = `${tilePath}/image.png?${new URLSearchParams({ expr: expression, source })}`;
+        rect.setBounds(lastBounds);
+        drawResult();
+        status.textContent = `计算完成 ${z}/${x}/${y}。${result.source_description}`;
+      } catch (error) {
+        status.textContent = `计算失败：${error.message}。请通过 FastAPI 服务首页访问本页面。`;
+      } finally {
+        button.disabled = false;
+      }
     };
+    document.getElementById('colormap').onchange = drawResult;
   </script>
 </body>
 </html>
