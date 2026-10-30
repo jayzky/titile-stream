@@ -6,7 +6,6 @@
   <title>TiTile-Stream · 波段计算工作台</title>
   <link rel="stylesheet" href="./vendor/leaflet.css" />
   <script src="./vendor/leaflet.js"></script>
-  <script src="https://unpkg.com/lucide@latest"></script>
   <style>
     :root {
       --bg: #0b0f19;
@@ -151,7 +150,6 @@
 <body>
   <div id="top-bar">
     <div class="brand">
-      <i data-lucide="satellite" style="color:var(--accent);"></i>
       <span>TiTile-Stream · 波段表达式与瓦片坐标计算</span>
     </div>
     <div style="font-size:12px;color:#9ca3af;display:flex;gap:12px;">
@@ -169,6 +167,7 @@
           <option value="simulated">内置模拟波段（不代表卫星影像）</option>
           <option value="raster">服务端配置栅格（TILE_RASTER_PATH）</option>
         </select>
+        <p id="source-details" role="status" style="font-size:12px;line-height:1.6;margin-bottom:10px;color:#cbd5e1;">正在检查数据来源…</p>
         <label>常用遥感指数预设</label>
         <div class="preset-btns">
           <button class="preset-btn" onclick="setExpr('(B8 - B4) / (B8 + B4 + 1e-6)')">NDVI (植被)</button>
@@ -221,8 +220,6 @@
   </div>
 
   <script>
-    if (window.lucide) lucide.createIcons();
-
     function setExpr(val) {
       document.getElementById('expr-input').value = val;
     }
@@ -263,7 +260,7 @@
       fillColor: '#38bdf8',
       fillOpacity: 0.15,
       dashArray: '4,4'
-    }).addTo(map);
+    });
     rect.bindPopup('所选 XYZ 瓦片边界；数据来源见计算状态。');
 
     // 绘制 256x256 像元伪彩色图
@@ -310,6 +307,10 @@
     let lastBounds = null;
     const status = document.getElementById('request-status');
     const button = document.getElementById('calc-btn');
+    const sourceSelect = document.getElementById('source-select');
+    const sourceDetails = document.getElementById('source-details');
+    let sourceGeneration = 0;
+    let availableBands = null;
 
     async function getJson(path) {
       const response = await fetch(path);
@@ -318,28 +319,71 @@
       return data;
     }
 
+    function clearResult() {
+      lastResult = null;
+      lastImagePath = null;
+      lastBounds = null;
+      if (rasterOverlay) {
+        map.removeLayer(rasterOverlay);
+        rasterOverlay = null;
+      }
+      if (map.hasLayer(rect)) map.removeLayer(rect);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ['mean', 'max', 'min', 'std', 'count'].forEach(name => {
+        document.getElementById(`stat-${name}`).textContent = '—';
+      });
+    }
+
+    async function selectSource() {
+      const generation = ++sourceGeneration;
+      clearResult();
+      availableBands = null;
+      if (sourceSelect.value === 'simulated') {
+        sourceDetails.textContent = '确定性模拟波段：B1、B2、B3、B4、B8、B11、B12。与底图无关。';
+        status.textContent = '已选择模拟数据，可计算地图中心所在瓦片。';
+        button.disabled = false;
+        return;
+      }
+      button.disabled = true;
+      sourceDetails.textContent = '正在读取栅格信息与覆盖范围…';
+      status.textContent = '正在检查服务端配置栅格。';
+      try {
+        const metadata = await getJson('/sources/raster');
+        if (generation !== sourceGeneration) return;
+        availableBands = metadata.bands.map(band => band.name);
+        const kind = metadata.data_kind === 'synthetic_demo' ? '自建演示数据，非卫星影像' : '服务端配置数据';
+        sourceDetails.textContent = `${metadata.name} · ${metadata.width}×${metadata.height} · ${metadata.crs}。可用波段：${availableBands.join('、')}。${kind}。`;
+        const b = metadata.bbox;
+        const latitudeLimit = 85.0511287798066;
+        map.fitBounds([[Math.max(-latitudeLimit, b.south), b.west],
+          [Math.min(latitudeLimit, b.north), b.east]], { padding: [24, 24], maxZoom: 16 });
+        status.textContent = '已定位栅格覆盖范围，请选择匹配波段的公式后计算。';
+        button.disabled = false;
+      } catch (error) {
+        if (generation !== sourceGeneration) return;
+        sourceDetails.textContent = `栅格读取失败：${error.message}`;
+        status.textContent = '请检查服务端栅格配置，或切换回模拟模式。';
+      }
+    }
+
     function drawResult() {
       if (!lastResult) return;
       const colormap = document.getElementById('colormap').value;
       renderRaster(lastResult.pixels, colormap,
         lastResult.stats.min, lastResult.stats.max);
       if (rasterOverlay) map.removeLayer(rasterOverlay);
-      rasterOverlay = L.imageOverlay(`${lastImagePath}&colormap=${colormap}`, lastBounds,
+      const overlay = L.imageOverlay(`${lastImagePath}&colormap=${colormap}`, lastBounds,
         { opacity: 0.85 }).addTo(map);
-      rasterOverlay.on('error', () => { status.textContent = 'PNG 瓦片加载失败，请检查后端响应。'; });
+      rasterOverlay = overlay;
+      overlay.on('error', () => {
+        if (rasterOverlay === overlay) status.textContent = 'PNG 瓦片加载失败，请检查后端响应。';
+      });
     }
 
     button.onclick = async () => {
+      const generation = sourceGeneration;
       button.disabled = true;
-      lastResult = null;
-      if (rasterOverlay) {
-        map.removeLayer(rasterOverlay);
-        rasterOverlay = null;
-      }
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ['mean', 'max', 'min', 'std', 'count'].forEach(name => {
-        document.getElementById(`stat-${name}`).textContent = '—';
-      });
+      clearResult();
       const z = map.getZoom();
       const point = map.project(map.getCenter(), z).divideBy(256).floor();
       const x = ((point.x % (2 ** z)) + 2 ** z) % (2 ** z);
@@ -348,11 +392,15 @@
       status.textContent = `正在请求后端计算 ${z}/${x}/${y}…`;
       try {
         const expression = document.getElementById('expr-input').value;
-        const source = document.getElementById('source-select').value;
+        const source = sourceSelect.value;
+        const missing = [...new Set(expression.match(/\bB\d+\b/g) || [])]
+          .filter(name => availableBands && !availableBands.includes(name));
+        if (missing.length) throw new Error(`当前栅格缺少波段 ${missing.join('、')}；可用波段：${availableBands.join('、')}`);
         const query = new URLSearchParams({ expr: expression, include_pixels: 'true', source });
         const [result, bounds] = await Promise.all([
           getJson(`${tilePath}/calc?${query}`), getJson(`${tilePath}/bounds`)
         ]);
+        if (generation !== sourceGeneration) return;
         lastResult = result;
         ['mean', 'max', 'min', 'std'].forEach(name => {
           const value = result.stats[name];
@@ -361,16 +409,20 @@
         document.getElementById('stat-count').textContent = `${result.valid_count} / ${result.nodata_count}`;
         lastBounds = [[bounds.bbox.south, bounds.bbox.west], [bounds.bbox.north, bounds.bbox.east]];
         lastImagePath = `${tilePath}/image.png?${new URLSearchParams({ expr: expression, source })}`;
-        rect.setBounds(lastBounds);
+        rect.setBounds(lastBounds).addTo(map);
         drawResult();
-        status.textContent = `计算完成 ${z}/${x}/${y}。${result.source_description}`;
+        status.textContent = result.valid_count > 0
+          ? `计算完成 ${z}/${x}/${y}。${result.source_description}`
+          : `当前瓦片 ${z}/${x}/${y} 无有效像元，请检查覆盖范围与公式。${result.source_description}`;
       } catch (error) {
-        status.textContent = `计算失败：${error.message}。请通过 FastAPI 服务首页访问本页面。`;
+        if (generation === sourceGeneration) status.textContent = `计算失败：${error.message}`;
       } finally {
-        button.disabled = false;
+        if (generation === sourceGeneration) button.disabled = false;
       }
     };
+    sourceSelect.onchange = selectSource;
     document.getElementById('colormap').onchange = drawResult;
+    selectSource();
   </script>
 </body>
 </html>

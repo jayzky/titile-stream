@@ -11,6 +11,9 @@ dependencies = [
 ]
 requires-python = ">=3.10"
 
+[tool.setuptools.package-data]
+service = ["*.html", "vendor/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

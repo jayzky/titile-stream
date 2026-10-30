@@ -8,3 +8,6 @@ htmlcov/
 .venv
 dist/
 build/
+*.egg-info/
+data/*.tif
+data/*.png

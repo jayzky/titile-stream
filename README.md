@@ -22,9 +22,9 @@
 - NDWI：`(B3 - B8) / (B3 + B8 + 1e-6)`
 - EVI：`2.5 * (B8 - B4) / (B8 + 6 * B4 - 7.5 * B2 + 1)`
 
-## 本机运行
+## 运行环境与启动
 
-在本目录使用已具备项目依赖和 Uvicorn 的 Python 环境手动执行，不需要后台常驻脚本：
+需要 Python 3.10+、`pyproject.toml` 中声明的依赖，以及用于启动 ASGI 服务的 Uvicorn；运行测试还需要 pytest、httpx。以下命令在项目根目录执行，Python 路径不绑定某台机器。可在自己选定的虚拟环境中运行，不需要后台常驻脚本：
 
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE = '1'
@@ -33,7 +33,37 @@ python -m uvicorn --app-dir src service.app:app --host 127.0.0.1 --port 8002
 
 打开 `http://127.0.0.1:8002/`。不要直接双击 HTML；页面的公式请求和本地 Leaflet 资源由同一服务提供。使用 OSM 或 Carto 底图配合 EPSG:3857 的 XYZ 结果，未加入坐标偏移转换的底图不参与叠加。底图依赖外部地图网络；不影响本地 API 计算。
 
-启用自有栅格时，在启动命令前设置服务端文件路径，然后在页面选择“服务端配置栅格”，把地图移到文件覆盖范围内计算：
+## 可复现的栅格演示
+
+另开终端或停止手动运行的服务后，在项目根目录生成自建双波段 GeoTIFF：
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE = '1'
+$env:PYTHONPATH = Join-Path (Get-Location) 'src'
+python -m service.demo --output './data/demo_bands.tif' --size 256
+$env:TILE_RASTER_PATH = (Resolve-Path './data/demo_bands.tif').Path
+python -m uvicorn --app-dir src service.app:app --host 127.0.0.1 --port 8002
+```
+
+生成器固定使用 EPSG:4326、经度 114.2–114.6°、纬度 30.3–30.7° 范围，输出 `B4`、`B8` 两个确定性渐变波段和左上无数据区。它是功能验证用的自建数据，不代表武汉的实际卫星观测。`--size` 允许 32–2048；`--output` 可指定其他路径。**目标已存在时直接失败，不覆盖已有数据**；重复演示可复用原文件，或选择新的输出名。生成文件由 `.gitignore` 排除。
+
+浏览器操作：
+
+1. 访问服务首页，选择“服务端配置栅格”；页面读取文件元数据，显示尺寸、CRS 和 `B4/B8` 波段，并自动定位实际覆盖范围。
+2. 使用默认 NDVI 表达式，点击“计算地图中心所在瓦片”。地图叠加结果、预览和统计均来自后端实际栅格读取；左上无数据或范围外像元透明。
+3. 选择 NDWI/EVI 时会提示缺少 `B3/B2` 波段；两波段演示不伪造这些波段。使用自有多波段文件时，按文件实际描述选择公式。
+4. 修改色带可重新显示当前结果；切换数据来源会清理旧统计和图像。栅格配置缺失、缺 CRS 或文件损坏时显示读取错误，不退回模拟结果。
+
+可在另一个终端检查同一演示链：
+
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:8002/health'
+Invoke-RestMethod 'http://127.0.0.1:8002/sources/raster'
+Invoke-RestMethod 'http://127.0.0.1:8002/tiles/10/837/420/calc?source=raster'
+Invoke-WebRequest 'http://127.0.0.1:8002/tiles/10/837/420/image.png?source=raster' -OutFile './data/demo_ndvi.png'
+```
+
+示例 XYZ 位于生成器覆盖范围内，统计应存在有效像元且 NDVI 在 0–1 之间。自有影像必须使用其覆盖范围内的 XYZ，不能复用这组坐标。启用自有栅格时，在启动命令前设置服务端文件路径，再在页面选择对应来源：
 
 ```powershell
 $env:TILE_RASTER_PATH = 'D:/data/my_multiband.tif'
@@ -51,6 +81,8 @@ $env:PROJ_LIB = $env:PROJ_DATA
 ## API
 
 - `GET /sources`：是否配置了栅格文件；配置存在不代表文件已经成功打开。
+- `GET /health`：服务存活状态；不依赖栅格是否正确配置。
+- `GET /sources/raster`：验证栅格可读性，返回文件名、尺寸、原 CRS、EPSG:4326 覆盖范围、可用波段名称／物理序号／类型，以及是否为自建演示数据。不会返回服务端绝对路径；缺配置、缺 CRS、无法转换的范围和读取失败返回 400。跨日期变更线或完全处于 Web Mercator 纬度范围外的数据暂不支持地图定位。
 - `GET /tiles/{z}/{x}/{y}/bounds`：XYZ 边界，经纬度单位为度，采用 EPSG:4326；XYZ 的 y 从北向南递增。
 - `GET /tiles/{z}/{x}/{y}/calc?expr=...&source=simulated`：返回形状、有效／无数据计数及均值、极值、标准差。`source=raster` 读取配置文件，`include_pixels=true` 另返回实际结果数组。
 - `GET /tiles/{z}/{x}/{y}/image.png?expr=...&source=simulated&colormap=ndvi`：输出 RGBA PNG，可选 `ndvi/water/turbo` 色带。
@@ -69,6 +101,9 @@ $env:PROJ_LIB = $env:PROJ_DATA
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE = '1'
 python -m pytest -p no:cacheprovider -q
+node --test tests/test_viewer.js
 ```
 
-测试覆盖表达式数值与拦截、掩码／nodata／除零、不裁剪通用结果、XYZ 合法性与共享边界、局部随机源可复现、输入数组及统计接口、自建双波段 GeoTIFF 的 EPSG:4326→3857 读取与不同 XYZ 范围、覆盖区外无数据、PNG 校验和与透明度，以及页面与本地资源路由。测试不访问外部地图或模型，不启动服务。
+Python 测试覆盖表达式数值与拦截、掩码／nodata／除零、不裁剪通用结果、XYZ 合法性与共享边界、局部随机源可复现、输入数组及统计接口、自建双波段 GeoTIFF 的 EPSG:4326→3857 读取与不同 XYZ 范围、覆盖区外无数据、PNG 校验和与透明度，以及页面与本地资源路由。新增演示链测试从文件生成、元数据、实际 NDVI 计算走到 PNG 输出，同时检查拒绝覆盖、确定性输出、元数据重投影和错误路径脱敏。
+
+前端测试使用 Node.js 18+ 自带 `node:test`，不需要 npm 依赖；覆盖真实范围定位、波段展示、缺波段提示、读取失败与来源切换竞态。测试不访问外部地图或模型，不启动服务。

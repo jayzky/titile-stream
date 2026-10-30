@@ -18,7 +18,17 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest fastapi pydantic shapely numpy uvicorn
+          python -m pip install -e . pytest httpx uvicorn
       - name: Run tests
         run: |
-          pytest -v
+          python -m pytest -p no:cacheprovider -v
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Test viewer state and metadata handling
+        run: node --test tests/test_viewer.js
+      - name: Verify distributable web assets
+        run: |
+          python -m pip wheel --no-deps --wheel-dir dist .
+          python -c "from pathlib import Path; from zipfile import ZipFile; names = ZipFile(next(Path('dist').glob('titile_stream-*.whl'))).namelist(); assert all(p in names for p in ['service/viewer.html', 'service/vendor/leaflet.js', 'service/vendor/leaflet.css'])"

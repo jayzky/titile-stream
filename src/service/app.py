@@ -12,6 +12,7 @@ import rasterio
 from rasterio.enums import Resampling
 from rasterio.transform import from_bounds
 from rasterio.vrt import WarpedVRT
+from rasterio.warp import transform_bounds
 from calc.band_math import BandAlgebraEngine
 from tile.tms import TileMath
 
@@ -86,6 +87,46 @@ def raster_band_map(dataset) -> dict[str, int]:
     return mapping
 
 
+def raster_failure(exc: Exception) -> ValueError:
+    if "proj" in str(exc).lower():
+        return ValueError(
+            "栅格坐标转换失败：请检查 PROJ_DATA／PROJ_LIB 是否指向当前 Rasterio 兼容的 proj.db"
+        )
+    return ValueError("配置的栅格无法读取或重投影")
+
+
+def describe_raster() -> dict:
+    try:
+        path = raster_path()
+        with rasterio.open(path) as dataset:
+            if dataset.crs is None:
+                raise ValueError("栅格缺少坐标参考系")
+            band_map = raster_band_map(dataset)
+            if not band_map:
+                raise ValueError("栅格没有可识别的波段")
+            bounds = transform_bounds(dataset.crs, "EPSG:4326", *dataset.bounds, densify_pts=21)
+            west, south, east, north = bounds
+            if (not np.isfinite(bounds).all() or west >= east or south >= north
+                    or west < -180 or east > 180 or south < -90 or north > 90):
+                raise ValueError("栅格覆盖范围无效或跨越日期变更线，当前地图暂不支持")
+            if south >= 85.0511287798066 or north <= -85.0511287798066:
+                raise ValueError("栅格覆盖范围位于 Web Mercator XYZ 支持范围之外")
+            return {
+                "source": "configured_raster", "name": path.name,
+                "crs": dataset.crs.to_string(), "width": dataset.width, "height": dataset.height,
+                "bbox_crs": "EPSG:4326",
+                "bbox": dict(zip(("west", "south", "east", "north"), bounds)),
+                "bands": [
+                    {"name": name, "index": index, "dtype": dataset.dtypes[index - 1]}
+                    for name, index in band_map.items()
+                ],
+                "data_kind": "synthetic_demo" if dataset.tags().get("data_kind") == "synthetic_demo"
+                else "user_configured",
+            }
+    except (rasterio.errors.RasterioError, rasterio.errors.CRSError) as exc:
+        raise raster_failure(exc) from exc
+
+
 def read_raster_tile(x: int, y: int, z: int) -> dict[str, np.ndarray]:
     TileMath.validate_coordinates(x, y, z)
     limit = 20037508.342789244
@@ -110,12 +151,7 @@ def read_raster_tile(x: int, y: int, z: int) -> dict[str, np.ndarray]:
                     for name, index in band_map.items()
                 }
     except (rasterio.errors.RasterioError, rasterio.errors.CRSError) as exc:
-        if "proj" in str(exc).lower():
-            raise ValueError(
-                "栅格坐标转换失败：请检查 PROJ_DATA／PROJ_LIB 是否指向当前 Rasterio 兼容的 proj.db；"
-                "本机 PostgreSQL 的 PROJ 数据库可能与该 Python 环境不兼容"
-            ) from exc
-        raise ValueError("配置的栅格无法读取或重投影") from exc
+        raise raster_failure(exc) from exc
 
 
 def calculate_tile_array(x: int, y: int, z: int, expr: str, source: str):
@@ -167,6 +203,19 @@ def encode_png(array: np.ndarray, colormap: str) -> bytes:
 def get_sources():
     configured = bool(os.environ.get("TILE_RASTER_PATH"))
     return {"simulated": True, "raster_configured": configured}
+
+
+@app.get("/health")
+def get_health():
+    return {"status": "ok", "service": "titile-stream"}
+
+
+@app.get("/sources/raster")
+def get_raster_metadata():
+    try:
+        return describe_raster()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/")
